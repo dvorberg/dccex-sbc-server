@@ -5,7 +5,7 @@ passing scheme using `asyncio.Queue`.
 import asyncio
 from typing import Any
 
-from .baseclasses import Publisher, Subscription
+from .abc import Publisher, Subscription
 
 class FinalIssue(object):
     """
@@ -115,7 +115,7 @@ class Subscription(Subscription):
             while True:
                 ret = await queue.get()
                 if ret is FinalIssue:
-                    raise StopIteration()
+                    break
                 else:
                     yield ret
                     queue.task_done()
