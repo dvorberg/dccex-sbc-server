@@ -50,8 +50,11 @@ class ExtenderSensorArray(Responder):
     @property
     def sensors(self) -> list:
         return [sensor for sensor in self._sensors if sensor is not None]
-            
-    def on_change(self):
+
+    def __iter__(self):
+        return iter(self.sensors)
+    
+    def on_change(self, *args):
         old = self.state
         new = self.bank.read()
         
