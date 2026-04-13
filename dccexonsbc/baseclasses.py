@@ -9,62 +9,60 @@ current state.
 
 from typing import Any
 
-class Subscription(object):
-    pass
+from .abc import Responder, Publisher, Subscription
 
-class Publisher(object):
-    """
-    Publisher/subscriber message passing pattern. 
-    """
-    def publish(self, message:Any|None):
-        """
-        Publish a messsage to all subscribers. None will be ignored.
-        """
-        raise NotImplementedError()
-
-    def discontinue(self):
-        """
-        Discontinue this publication. 
-        """
-        raise NotImplementedError()
-
-    def make_subscription(self) -> Subscription:
-        """
-        Return a subscription to this publisher. 
-        """
-        raise NotImplementedError()
-
-class HardwareItem(object):
-    """
-    Any piece hardware our DCC-EX server knows about like
-    turnouts, signals, and signals. 
-    """
-    pass
-    
-class Responder(HardwareItem):
+class Responder(Responder):
     """
     A hardware item that knows to represent its current state as
     DCC-EX response and needs access to the response publisher.
     """
-    
     response_publisher:Publisher = None
     """
     The `response_publisher` is set by the server on adding a responder
     to the hardware list. 
     """
-    def publish(self, response:bytes|None):
-        self.response_publisher.publish(response)
     
-class Turnout(Responder):
+    def publish(self, response:bytes):
+        self.response_publisher.publish(response)
+
+class Hardware(object):
+    states:tuple
+    
+    async def set(self, state:Any):
+        raise NotImplemented()
+
+    @property
+    def state(self):
+        raise NotImplemented()
+
+class ResponderWithState(Responder, Hardware):
+    
+    @property
+    def state_response(self) -> bytes:
+        """
+        Represent our state as a DCC-EX response.
+        """
+        raise NotImplementedError()
+
+    async def _set(self, state:Any):
+        """
+        Actually set the state, maybe by mechanically moving things.
+        This function may introduce a timeout using asyncio.sleep(). 
+        """
+        raise NotImplementedError()
+    
+    async def set(self, state:Any):
+        """
+        Await _set() to do the actual work and then publish our
+        state respone.
+        """
+        await self._set(state)
+        self.publish(self.state_response)
+        
+class Turnout(ResponderWithState):
     """
     A turnout or point. 
     """
-    
-    exid:int
-    """
-    Identify this accessory in DCC commands and responses.  
-    """
-    
     closed_state:int = 0
     """
     Default state, the turnout is set for the train to go straight.
@@ -98,13 +96,6 @@ class Turnout(Responder):
         """
         await self.set(self.reset_state)
 
-    async def set(self, state:int):
-        """
-        Set state, publish a state response.
-        """
-        await self._set(state)
-        self.publish(self.state_response)
-
     @property
     def state_response(self) -> bytes:
         """
@@ -112,13 +103,6 @@ class Turnout(Responder):
         """
         return b"<H %i %i>" % ( self.exid, self.state, )
 
-    async def _set(self, state:int):
-        """
-        Actually set the state by mechanically moving things.
-        This function may introduce a timeout using asyncio.sleep(). 
-        """
-        raise NotImplementedError()
-    
     @property
     def state(self) -> int:
         """
@@ -134,11 +118,6 @@ class Turnout(Responder):
 class Signal(Responder):
     """
     This is a base class for signals and semaphores. 
-    """
-    
-    exid:int
-    """
-    Identify this accessory in DCC commands and responses.  
     """
     
     green = "green"
@@ -158,7 +137,8 @@ class Signal(Responder):
         Is the signal currently signaling “stop?"
         There is no setter. 
         """
-    
+        return (self.state == self.red)
+        
     async def greenlight(self):
         """
         Signal "go."
@@ -170,27 +150,6 @@ class Signal(Responder):
         Signal "stop."
         """
         await self.set(self.red)
-
-    async def set(self, state:str):
-        """
-        Set the signal state and publish a response describing it.        
-        """
-        await self._set(state)
-        self.publish(self.state_response)
-        
-    async def _set(self, state:str):
-        """
-        Actually set the state by (maybe) mechanically moving things.
-        This function may introduce a timeout using asyncio.sleep(). 
-        """
-        raise NotImplementedError()
-
-    @property
-    def state(self) -> str:
-        """
-        Report the signal’s current state. There is no setter. 
-        """
-        raise NotImplementedError()
 
 
 class ThreeStateSignal(Signal):
@@ -209,28 +168,13 @@ class ThreeStateSignal(Signal):
         """
         raise NotImplementedError()
     
-    def _set(self, state:str):
-        """
-        Actually set the state by (maybe) mechanically moving things.
-        This function may introduce a timeout using asyncio.sleep().         
-        """
-        raise NotImplementedError()
-
     signaling_slow:bool = True
-
-    @property
-    def state(self) -> str:
-        """
-        Report the signal’s current state. There is no setter. 
-        """        
-        raise NotImplementedError()
 
     
 class Sensor(Responder):
     """
     A sensor detecting if a vehicle is occupying a section of track. 
-    """
-    
+    """    
     def __init__(self, exid:int):
         """
         `exid`: Identify this accessory in DCC commands and responses.  
@@ -247,7 +191,7 @@ class Sensor(Responder):
         """
         Callback function informing the Sensor object of a
         state change. No check is being performed if the
-        state is actually changed. A DCC-EX response will
+        state is actually changed, a DCC-EX response will
         always be published. 
         """
         self.active = active
