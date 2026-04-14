@@ -7,6 +7,7 @@ DCC-EX context, i.e. know how to formulate responses describing their
 current state.
 """
 
+import threading
 from typing import Any
 
 from .abc import Responder, Publisher, Subscription
@@ -29,11 +30,19 @@ class Hardware(object):
     states:tuple
     
     async def set(self, state:Any):
-        raise NotImplemented()
+        if self.state != state:
+            self._set(stat)
+
+    def _set(self, state:Any):
+        """
+        Actually set the state, maybe by mechanically moving things.
+        This function may introduce a timeout using asyncio.sleep(). 
+        """
+        raise NotImplementedError()
 
     @property
     def state(self):
-        raise NotImplemented()
+        raise NotImplementedError()
 
 class ResponderWithState(Responder, Hardware):
     
@@ -44,19 +53,13 @@ class ResponderWithState(Responder, Hardware):
         """
         raise NotImplementedError()
 
-    async def _set(self, state:Any):
-        """
-        Actually set the state, maybe by mechanically moving things.
-        This function may introduce a timeout using asyncio.sleep(). 
-        """
-        raise NotImplementedError()
-    
     async def set(self, state:Any):
         """
         Await _set() to do the actual work and then publish our
         state respone.
         """
-        await self._set(state)
+        if self.state != state:
+            self._set(state)
         self.publish(self.state_response)
         
 class Turnout(ResponderWithState):
@@ -164,7 +167,7 @@ class ThreeStateSignal(Signal):
 
     async def slowlight(self):
         """
-        Signal 
+        Signal amber
         """
         raise NotImplementedError()
     
@@ -227,5 +230,42 @@ class Sensor(Responder):
         cls = self.__class__.__name__
         return f"<{cls} {self.exid} state={active}>"
 
+type SetPulse = Callable[[float|None], None]
+"""
+Called by a Servo class to set a servo’s pulse in fractions of a
+second; “fractions” meaning the unit is 1sec and float < 1. Passing
+None as argument will turn the servo off in its current position (to
+minimize jitter). Always returns None.
+"""
 
+class Servo(object):
+    """
+    Baseclass for servos. The particular servo classes implement
+    pulse_for() to convert an angle to the specific pulse length
+    that will move the servo to that angle.
+    """
+    def __init__(self, set_pulse:SetPulse, stop_timeout=0.2):
+        self._set_pulse = set_pulse
+        self.stop_timeout = stop_timeout
+        
+        self._timeout = None
+        
+    def pulse_for(self, angle:float) -> float:
+        raise NotImplementedError()
+
+    def set_angle(self, angle:float) -> None:
+        self.set_pulse(self.pulse_for(angle))
+
+    def stop(self) -> None:
+        self._set_pulse(None)
+
+    def set_pulse(self, pulse_ms:float) -> None:
+        self._set_pulse(pulse_ms)
+        
+        if self._timeout:
+            self._timeout.cancel()
+            
+        self._timeout = threading.Timer(self.stop_timeout, self.stop)
+    
+    
     
