@@ -1,0 +1,64 @@
+#!/usr/bin/env python
+
+import sys, argparse, time
+
+import lgpio as sbc
+import pca9685
+
+from dccexonsbc.hardware.i2c import ServoDriver
+from dccexonsbc.hardware import servos
+
+def hexint(s):
+    if s.startswith("0x"):
+        return int(s[2:], 16)
+    else:
+        return int(s)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-a", "--address", type=hexint, default=0x40,
+                        help="Servo driver’s i2c address on bus")
+    parser.add_argument("-b", "--bus", type=hexint, default=1, dest="busnum",
+                        help="i2c bus number")
+    parser.add_argument("-1", dest="once", action="store_true", default=False,
+                        help="Perform the movement once, "
+                        "move to angle_a, then to angle_b, then quit.")
+    parser.add_argument("-t", "--timeout", type=float, default=1.5,
+                        help="Timeout between moves in seconds. "
+                        "Defaults to 1.5.")
+    parser.add_argument("-v", "--verbose", default=False, action="store_true",
+                        help="Print angles to stderr.")
+    parser.add_argument("-T", "--servo-type", default="SG90", 
+                        help="Classname from dccexonsbc.hardware.servos."
+                        "Defaults to SG90, a common mini servo type.")
+    parser.add_argument("channel", type=int,
+                        help="Channel of the servo on the PCA985")
+    parser.add_argument("angle_a", type=float)
+    parser.add_argument("angle_b", type=float)
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        log = sys.stderr
+    else:
+        log = open("/dev/null", "w")
+    
+    controller = pca9685.Controller(sbc, args.busnum, args.address)
+    driver = ServoDriver(controller)
+    servo_class = getattr(servos, args.servo_type)
+    servo = driver.get_servo(args.channel, servo_class)
+    
+    while True:
+        servo.set_angle(args.angle_a)
+        print(args.angle_a, file=log)
+        
+        time.sleep(args.timeout)
+        servo.set_angle(args.angle_b)
+        print(args.angle_b, file=log)
+
+        if args.once:
+            break
+        else:
+            time.sleep(args.timeout)
+
+main()
