@@ -3,11 +3,11 @@ from typing import Tuple
 from .abc import Agent, Responder
 from .baseclasses import Hardware
 
-class Agent(Agent):
+class Agent(Agent, Responder):
     def __init__(self, hardware:Hardware, state_map=Tuple|None):
         """
-        If a state map is provided, the hardware will be `set(i)`
-        to `state_map[i]`.
+        If a state map is provided, the hardware will be called
+        through `set(state_map[i])` instead of `set(hardware.states[i])`.
         """
         self.hardware = hardware
         self.state_map = state_map
@@ -15,7 +15,7 @@ class Agent(Agent):
         if isinstance(hardware, Responder):
             self.responder = hardware
 
-    def set(self, activate:int):
+    async def set(self, activate:int):
         """
         This is the default case. Most DCC commands causing any hardware
         to move of change have a single intetger as id for the device
@@ -26,6 +26,17 @@ class Agent(Agent):
         else:
             self.hardware.set(self.hardware.states[activate])
 
+        await self.publish_state()
+
+    async def publish_state(self):
+        response = self.state_response
+        if response:
+            self.publish(response)
+
+    @property
+    def state_response(self) -> bytes:
+        raise NotImplementedError()
+    
 class Accessory(Agent):
     """
     The DCC Command Station can talk to DCC Accessory Controllers over the 
@@ -55,7 +66,7 @@ class Accessory(Agent):
         self.address = address
         self.responder = None
 
-    def set_aspect(self, aspect:int):
+    async def set_aspect(self, aspect:int):
         """
         This corresponds to DCC-EX’ new <A address asect> command.
         The default impementation will set the `hardware` to the
@@ -64,7 +75,11 @@ class Accessory(Agent):
         This does not create responses. 
         """
         self.hardware.set(self.hardware.states[aspect])
-
+        
+    @property
+    def state_response(self) -> bytes:
+        response = f"<* {cls} {self.address} set to {self.hardware.state} *>"
+        return response.decode("ascii", "replace")
         
 class Turnout(Agent):
     """
@@ -76,22 +91,26 @@ class Turnout(Agent):
                  address_spec:Tuple|None=None,
                  state_map=Tuple|None):
         """
-        The `turnout_id` is the integer number by which this turnout is
-        identified for commands. The `address_spec` allows to emulate the
-        various ways in which a turnout may be setup in DCC EX. If not
-        set, the virtual station will not list this turnout when requested
-        to do so by <JT …> or <J T …> commands. If set, it will turn the
-        members of the tuple to byte strings and join them with spaces.
-        (Use byte strings for strings!) The address spec is for cosmetic
-        purposes only and does not change how the virtual station’s behaves. 
+        The `turnout_id` is the integer number by which this
+        turnout is identified for commands. The `address_spec` allows
+        to emulate the various ways in which a turnout may be setup in
+        DCC EX. It has no application beyond providing setup
+        information if requested by the client. If not set, the
+        virtual station will not list this turnout when requested to
+        do so by <JT …> or <J T …> commands. If set, it will turn the
+        members of the tuple to byte strings and join them with
+        spaces. (Use byte strings, not strings!) 
 
-            turnout_id = 5, address_spec = ( b"DCC", 12, 12)
+            turnout_id = 5, address_spec = ( b"DCC", 7, 12)
             <T 5 X>
-            => <H 5 DCC 12 12>
+            => <H 5 DCC 7 12>
         """
-        super().__init__(address, state_map)
+        super().__init__(hardware, state_map)
         self.turnout_id = turnout_id
-        self.address_spec = b" ".join([bytes(a) for a in address_spec])
+        if address_spec:
+            self.address_spec = b" ".join([bytes(a) for a in address_spec])
+        else:
+            self.address_spec = None
 
     @property
     def state_response(self) -> bytes:
@@ -102,4 +121,5 @@ class Turnout(Agent):
         if self.address_spec:
             return b"<H %i %s>" % (self.turnout_id, self.address_spec)
 
-# class Signal        
+class Signal(object):
+    pass

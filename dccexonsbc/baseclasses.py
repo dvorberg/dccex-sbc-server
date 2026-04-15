@@ -29,40 +29,17 @@ class Responder(Responder):
 class Hardware(object):
     states:tuple
     
-    async def set(self, state:Any):
-        if self.state != state:
-            self._set(stat)
-
-    def _set(self, state:Any):
-        """
-        Actually set the state, maybe by mechanically moving things.
-        This function may introduce a timeout using asyncio.sleep(). 
-        """
+    def set(self, state:Any):
         raise NotImplementedError()
 
+    def reset(self):
+        self.set(self.states[0])
+    
     @property
     def state(self):
         raise NotImplementedError()
 
-class ResponderWithState(Responder, Hardware):
-    
-    @property
-    def state_response(self) -> bytes:
-        """
-        Represent our state as a DCC-EX response.
-        """
-        raise NotImplementedError()
-
-    async def set(self, state:Any):
-        """
-        Await _set() to do the actual work and then publish our
-        state respone.
-        """
-        if self.state != state:
-            self._set(state)
-        self.publish(self.state_response)
-        
-class Turnout(ResponderWithState):
+class Turnout(Hardware):
     """
     A turnout or point. 
     """
@@ -76,7 +53,7 @@ class Turnout(ResponderWithState):
     Thrown state, the train will turn left or right.
     """
     
-    states = {closed_state, thrown_state}
+    states = (closed_state, thrown_state,)
 
     @property
     def thrown(self) -> bool:
@@ -87,24 +64,17 @@ class Turnout(ResponderWithState):
         """
         return (self.state == self.thrown_state)
     
-    async def throw(self):
+    def throw(self):
         """
         Set the turnout in the thrown state.
         """
-        await self.set(self.thrown_state)
+        self.set(self.thrown_state)
 
-    async def close(self):
+    def close(self):
         """
         Set the turnout in the default state.
         """
-        await self.set(self.reset_state)
-
-    @property
-    def state_response(self) -> bytes:
-        """
-        Represent our state as a DCC-EX response.
-        """
-        return b"<H %i %i>" % ( self.exid, self.state, )
+        self.set(self.reset_state)
 
     @property
     def state(self) -> int:
@@ -142,17 +112,17 @@ class Signal(Responder):
         """
         return (self.state == self.red)
         
-    async def greenlight(self):
+    def greenlight(self):
         """
         Signal "go."
         """
-        await self.set(self.green)
+        self.set(self.green)
 
-    async def reset(self):
+    def reset(self):
         """
         Signal "stop."
         """
-        await self.set(self.red)
+        self.set(self.red)
 
 
 class ThreeStateSignal(Signal):
@@ -163,9 +133,9 @@ class ThreeStateSignal(Signal):
     amber = "amber"
     slow = "amber"
 
-    states = {Signal.red, Signal.green, amber}
+    states = (Signal.red, Signal.green, amber,)
 
-    async def slowlight(self):
+    def slowlight(self):
         """
         Signal amber
         """
@@ -266,6 +236,7 @@ class Servo(object):
             self._timeout.cancel()
             
         self._timeout = threading.Timer(self.stop_timeout, self.stop)
+        self._timeout.start()
     
     
     

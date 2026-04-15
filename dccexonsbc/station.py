@@ -116,6 +116,7 @@ class Station(Station):
             asyncio.set_event_loop(loop)
             self.loop = loop
             try:
+                self._running = True
                 loop.run_forever()
                 for task in asyncio.all_tasks(loop):
                     if not (task.done() or task.cancelled()):
@@ -150,7 +151,7 @@ class Station(Station):
         # Setup operating system signal handling, mostly to 
         # facilitate clean shutdown. 
         self.old_signal_handlers = {}
-        for signalnum in (signal.SIGINT, signal.SIGTERM): 
+        for signalnum in (signal.SIGINT, signal.SIGTERM):
             self.old_signal_handlers[signalnum] = signal.signal(
                 signalnum, self.handle_signal)
 
@@ -163,13 +164,18 @@ class Station(Station):
             self.command_publisher.discontinue()
             self.response_publisher.discontinue()
             self.signal_publisher.discontinue()
+
+            self._running = False
             
             # The loop will finish its tasks and after than,
             # in self.thread, run_forever() will return and
             # run_event_loop() will set self.loop to None.
             self.loop.stop()
-            
-        self.loop.call_soon_threadsafe(_stop)
+
+        if self.loop is None:
+            raise RuntimeError("Loop already shut down.")
+        else:
+            self.loop.call_soon_threadsafe(_stop)
         
 
     def abort(self):
@@ -177,7 +183,8 @@ class Station(Station):
         Abort allows to cleanly abort server setup before run()
         has been called.
         """
-        self.stop()
+        if self.running:
+            self.stop()
         self.thread.join()
 
     command_re = re.compile(br"<([QS])([\s\d]*)>")
@@ -257,6 +264,10 @@ class Station(Station):
         asyncio.run_coroutine_threadsafe(self._run(), self.loop)
         self.thread.join()
 
+    @property
+    def running(self):
+        return self._running
+
     def register_sensor(self, sensor:Sensor):
         assert isinstance(sensor, Sensor), TypeError
         if sensor.exid in self.sensors:
@@ -271,7 +282,7 @@ class Station(Station):
         for sensor in sensors:
             self.register_sensor(sensor)
 
-    def register_accessory(self, accessory:agents.Accessory):
+    def register_accessory_agent(self, accessory:agents.Accessory):
         assert isinstance(sensor, agents.Accessory), TypeError
         if accessory.address in self.accessories:
             raise DuplicateError(f"Accessory with address "
@@ -281,8 +292,8 @@ class Station(Station):
             self.accessories[accessory.address] = accessory
             accessory.response_publisher = self.response_publisher
         
-    def register_turnout(self, turnout:agents.Turnout):
-        assert isinstance(sensor, agents.Turnout), TypeError(
+    def register_turnout_agent(self, turnout:agents.Turnout):
+        assert isinstance(turnout, agents.Turnout), TypeError(
             "This is registering Turnout Agents, not turnout hardware.")
         if turnout.turnout_id in self.turnouts:
             raise DuplicateError(f"Turnout (agent!) with id "
@@ -291,6 +302,9 @@ class Station(Station):
         else:
             self.turnouts[turnout.turnout_id] = turnout
             turnout.response_publisher = self.response_publisher
+
+    def register_signal_agent(self, signal:agents.Signal):
+        pass
 
 if __name__ == "__main__":
     import argparse, warnings, pathlib

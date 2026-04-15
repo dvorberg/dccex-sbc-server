@@ -13,13 +13,13 @@ class ServoTurnout(Turnout):
 
         # Force a servo update.
         self._state = None
-        self._set(self.closed_state)
+        self.reset()
 
     @property
     def state(self):
         return self._state
 
-    def _set(self, state:int):
+    def set(self, state:int):
         if state != self._state:
             self.servo.set_pulse(self.bounds[state])
             self._state = state
@@ -35,13 +35,13 @@ class ServoSemaphore(Signal):
 
         # Force a servo update.
         self._state = None
-        self._set(self.red)
+        self.reset()
 
     @property
     def state(self):
         return self._state
 
-    def _set(self, state:int):
+    def set(self, state:int):
         if state != self._state:
             idx = self.states.index(state)
             self.servo.set_pulse(self.bounds[idx])
@@ -63,40 +63,39 @@ class ThreeStateServoSemaphore(ThreeStateSignal):
 
         # This is going to initialize the main servo and reset()
         # the signal to STOP.
-        self._state = None
-        self._set(self.states[0])
+        self.reset()
 
     @property
     def signaling_stop(self) -> bool:
         return (self._state == self.red)
 
-    async def greenlight(self):
+    def greenlight(self):
         if self._state != self.green:
-            await self.main_signal.greenlight()
+            self.main_signal.greenlight()
             self.speed_servo.set_pulse(self.speed_bounds[0])
             self._state = self.green
 
-    async def slowlight(self):
+    def slowlight(self):
         if self._state != self.amber:
-            await self.main_signal.greenlight()
+            self.main_signal.greenlight()
             self.speed_servo.set_pulse(self.speed_bounds[1])
             self._state = self.amber
 
-    async def reset(self):
+    def reset(self):
         if not self.signaling_stop:
-            await self.main_signal.reset()
+            self.main_signal.reset()
             self.speed_servo.set_pulse(self.speed_bounds[0]) 
             self._state = self.red
     
-    async def set(self, state:str):
+    def set(self, state:str):
         assert state in self.states, ValueError
         
         if state == self.red:
-            await self.reset()
+            self.reset()
         elif state == self.green:
-            await self.greenlight()
+            self.greenlight()
         elif state == self.amber:
-            await self.slowlight()
+            self.slowlight()
         
         
         

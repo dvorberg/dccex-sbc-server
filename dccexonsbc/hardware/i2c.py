@@ -3,6 +3,7 @@ This module contains classes that implement hardware connections
 that use the i2c bus.
 """
 import sys, threading, asyncio
+import icecream; icecream.install()
 
 import mcp23017, pca9685
 
@@ -100,9 +101,9 @@ class ServoDriver(object):
         self.default_servo_class = default_servo_class
         self.default_stop_timeout = default_stop_timeout
         
-    def make_servo(self, channel_no:int,
-                   servo_class:type[Servo]=None,
-                   stop_timeout:float=None) -> Servo:
+    def get_servo(self, channel_no:int,
+                  servo_class:type[Servo]=None,
+                  stop_timeout:float=None) -> Servo:
         if not channel_no in self._servos:
             if servo_class is None:
                 servo_class = self.default_servo_class
