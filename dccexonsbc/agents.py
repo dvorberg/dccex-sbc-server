@@ -1,10 +1,10 @@
 from typing import Tuple
 
-from .abc import Agent, Responder
-from .baseclasses import Hardware
+from .abc import Agent
+from .baseclasses import Hardware, Responder
 
 class Agent(Agent, Responder):
-    def __init__(self, hardware:Hardware, state_map=Tuple|None):
+    def __init__(self, hardware:Hardware, state_map:Tuple|None=None):
         """
         If a state map is provided, the hardware will be called
         through `set(state_map[i])` instead of `set(hardware.states[i])`.
@@ -21,6 +21,8 @@ class Agent(Agent, Responder):
         to move of change have a single intetger as id for the device
         and another integer as either an 0=off or 1=on state. 
         """
+        ic(activate)
+        ic(self.state_map)
         if self.state_map:
             self.hardware.set(self.state_map[activate])
         else:
@@ -36,8 +38,15 @@ class Agent(Agent, Responder):
     @property
     def state_response(self) -> bytes:
         raise NotImplementedError()
+
+class SilentAgent(Agent):
+    @property
+    def state_response(self) -> bytes:
+        cls = self.__class__.__name__
+        response = f"<*sbc {cls} {self.address} set to {self.hardware.state} *>"
+        return response.encode("ascii", "replace")           
     
-class Accessory(Agent):
+class Accessory(SilentAgent):
     """
     The DCC Command Station can talk to DCC Accessory Controllers over the 
     track. The controller will then power and activate that accessory.
@@ -61,7 +70,7 @@ class Accessory(Agent):
     There is no command to setup or list accessories.
     """
     def __init__(self, address:int|Tuple[int, int], hardware:Hardware,
-                 state_map=Tuple|None):
+                 state_map:Tuple|None=None):
         super().__init__(hardware, state_map)
         self.address = address
         self.responder = None
@@ -73,13 +82,8 @@ class Accessory(Agent):
         state numbered by the `aspect`.
 
         This does not create responses. 
-        """
+        """        
         self.hardware.set(self.hardware.states[aspect])
-        
-    @property
-    def state_response(self) -> bytes:
-        response = f"<* {cls} {self.address} set to {self.hardware.state} *>"
-        return response.decode("ascii", "replace")
         
 class Turnout(Agent):
     """
@@ -89,7 +93,7 @@ class Turnout(Agent):
     """
     def __init__(self, turnout_id:int, hardware:Hardware,
                  address_spec:Tuple|None=None,
-                 state_map=Tuple|None):
+                 state_map:Tuple|None=None):
         """
         The `turnout_id` is the integer number by which this
         turnout is identified for commands. The `address_spec` allows
@@ -114,12 +118,69 @@ class Turnout(Agent):
 
     @property
     def state_response(self) -> bytes:
-        return b"<H %i %i>" % ( self.turnout_id, self.state, )
+        return b"<H %i %i>" % ( self.turnout_id, self.hardware.state, )
 
     @property
     def setup_response(self) -> bytes:
         if self.address_spec:
             return b"<H %i %s>" % (self.turnout_id, self.address_spec)
 
-class Signal(object):
-    pass
+class Threeway(object):
+    class Agent(Turnout):
+        def __init__(self, wrapper, turnout_id, thrown_state):
+            if thrown_state == wrapper.hardware.left:
+                hardware = wrapper.hardware.left_turnout
+            else:
+                hardware = wrapper.hardware.right_turnout
+                
+            super().__init__(turnout_id, hardware)
+            
+            self.wrapper = wrapper
+            self.thrown_state = thrown_state
+
+        async def set(self, state:int):
+            if state == 0:
+                self.wrapper.hardware.set(0)
+            else:
+                self.wrapper.hardware.set(self.thrown_state)
+
+            await self.wrapper.publish_states()
+
+    def __init__(self, left_turnout_id:int, right_turnout_id:int,
+                 hardware:Hardware):
+        self.hardware = hardware
+        self.left_agent = self.Agent(self, left_turnout_id, 1)
+        self.right_agent = self.Agent(self, right_turnout_id, 2)
+
+    async def publish_states(self):
+        self.left_agent.publish(b"<H %i %i>" % (
+            self.left_agent.turnout_id,
+            self.hardware.left_turnout.state, ))
+        self.right_agent.publish(b"<H %i %i>" % (
+            self.right_agent.turnout_id,
+            self.hardware.right_turnout.state, ))
+        
+        
+class Signal(SilentAgent):
+    state_map = { "AMBER": "amber",
+                  "GREEN": "green",
+                  "RED": "red", }
+    
+    def __init__(self, signal_id:int, hardware:Hardware,
+                 state_map:dict|None=None):
+        super().__init__(hardware, state_map)
+        self.signal_id = signal_id
+
+        if state_map is None:
+            self.state_map = self.__class__.state_map
+        else:
+            self.state_map = state_map
+
+    @property
+    def address(self) -> int:
+        return self.signal_id
+            
+    async def set(self, color:str):
+        self.hardware.set(self.state_map[color])
+        await self.publish_state()
+            
