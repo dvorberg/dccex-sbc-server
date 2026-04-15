@@ -39,6 +39,10 @@ class Hardware(object):
     def state(self):
         raise NotImplementedError()
 
+    @state.setter
+    def state(self, state:Any):
+        self.set(state)
+    
 class Turnout(Hardware):
     """
     A turnout or point. 
@@ -88,7 +92,7 @@ class Turnout(Hardware):
         raise NotImplementedError()
         
 
-class Signal(Responder):
+class Signal(Hardware, Responder):
     """
     This is a base class for signals and semaphores. 
     """
@@ -144,7 +148,7 @@ class ThreeStateSignal(Signal):
     signaling_slow:bool = True
 
     
-class Sensor(Responder):
+class Sensor(Hardware, Responder):
     """
     A sensor detecting if a vehicle is occupying a section of track. 
     """    
