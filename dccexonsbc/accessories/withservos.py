@@ -63,6 +63,7 @@ class ThreeStateServoSemaphore(ThreeStateSignal):
 
         # This is going to initialize the main servo and reset()
         # the signal to STOP.
+        self._state = None
         self.reset()
 
     @property
@@ -96,11 +97,7 @@ class ThreeStateServoSemaphore(ThreeStateSignal):
             self.greenlight()
         elif state == self.amber:
             self.slowlight()
-        
-        
-        
-                 
-        
 
-    
-
+    @property
+    def state(self):
+        return self._state
