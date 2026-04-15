@@ -37,7 +37,6 @@ class Server(Server):
     async def read_commands(self, reader):
         while True:
             command = await reader.read(100)
-            print("Got command through network", repr(command))
             if command == b"":
                 break
             else:
@@ -45,8 +44,6 @@ class Server(Server):
                 
     async def write_responses(self, writer):
         async for response in Subscription(self.station.response_publisher):
-            print("Got response through the queue", repr(response))
-            
             if type(response) is str:
                 response = response.encode("ascii")
 
@@ -70,8 +67,7 @@ class Server(Server):
 
                 if self.server_task:
                     self.server_task.cancel()
-
-                print("break")
+                    
                 break
             
     async def start(self, host, port):        
@@ -86,7 +82,7 @@ class Server(Server):
         addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
         print(f'Serving on {addrs}')
 
-        
+class ParseError(Exception): pass        
 
 class Station(Station):
     def __init__(self, host=None, port=2560):
@@ -147,6 +143,7 @@ class Station(Station):
         self.sensors = {}
         self.turnouts = {}
         self.accessories = {}
+        self.signals = {}
         
         # Setup operating system signal handling, mostly to 
         # facilitate clean shutdown. 
@@ -187,56 +184,214 @@ class Station(Station):
             self.stop()
         self.thread.join()
 
-    command_re = re.compile(br"<([QS])([\s\d]*)>")
+    param_re = re.compile(br"(?:(\d+)|([a-zA-Z]+))(.*)")
+    def parse_params(self, params):
+        while params:
+            match = self.param_re.search(params)
+            if match is None:
+                raise ParseError("Can’t parse params " + repr(params))
+            else:
+                i, s, params = match.groups()
+
+                if i:
+                    yield int(i)
+                elif s:
+                    yield s.decode("ascii").upper()
+
+                
+    command_re = re.compile(br"<([a-zA-Z/=]+)(?: (.*))?>")
     whitespace_re = re.compile(br"\s+")
-    def parse_command(self, command:bytes) -> None|str|Tuple[str,Tuple]:
+    def parse_command(self, command:bytes) -> Tuple[str, Tuple]:
         """
         Parse out subset of DCC++ commands into a single letter (string)
-        and a tuple or 0 or more integer parameters. 
+        and a tuple of 0 or more parameters. If these parameters can be
+        parsed into an integer, they will be integers, otherwise strings.
         """
         print("parse_command()", repr(command))
         match = self.command_re.match(command)
         
         if match is None:
-            return None
+            raise ParseError(command.decode("ascii", "replace"))
         else:
-            letter, params = match.groups()
-            letter = letter.decode()
+            opcode, params = match.groups()
+            opcode = opcode.decode("ascii")
 
             if params:
-                params = tuple(
-                    [int(a) for a in self.whitespace_re.split(params.strip())])
-                return letter, params,
+                params = tuple(self.parse_params(params))
             else:
-                return letter
-        return None
-    
+                params = ()
+
+            if opcode == "JT":
+                opcode = "J"
+                params = ("T",) + params
+
+            if not params:
+                return opcode
+            else:                
+                return opcode, params,
+        
     async def handle_commands(self):
         # Shorthand:
         respond = self.response_publisher.publish
-        
+
+        def error(): respond(b"<X>")
+        def ok(): respond(b"<O>")
+
+        def list_turnouts():
+            for t in self.turnouts.values():
+                respond(t.state_response)
+
+        def list_sensor_states():
+            for sensor in self.sensors.values():
+                respond(sensor.state_response)
+                
         async for command in Subscription(self.command_publisher):
-            print("Handling command", repr(command),
-                  repr(self.parse_command(command)))
-            
-            match self.parse_command(command):
+            print("Handling command", repr(command))
+
+            try:
+                cmd = self.parse_command(command)
+            except ParseError as exc:
+                traceback.print_exception(exc)
+                error()
+                continue
+
+            ic(cmd)
+            match cmd:
+                # Station init
+
+                case "s":
+                    respond(b"<iDCC-EX 0.0 / RaspberryPi / None / 0>")
+                    list_turnouts()
+                    list_sensor_states()
+                
+                # Sensors
                 case "S":
                     # Request technical sensor info.
                     for sensor in self.sensors.values():
                         respond(sensor.setup_response)
+                        
                 case "Q":
                     # Request list of sensor states.
-                    for sensor in self.sensors.values():
-                        respond(sensor.state_response)
+                    list_sensor_states()
+                    
                 case "S", (id,):
                     # Delete a sensor. We respond by indicating an error.
                     # We can’t delete sensonrs.
-                    respond(b"<X>")
+                    error()
                 case "S", (id, vpin, pullup):
                     # Setup a sensor. We don’t do anything, but respond as
                     # if the operation had been successfull.
-                    respond(b"<O>")
+                    ok()
+
+                # Turnouts
+                case "T":
+                    # <T> - Request a list all defined turnouts/Points
+                    list_turnouts()
+                        
+                case "T", (id, state,):
+                    ic(id, state)
+                    
+                    if id not in self.turnouts:
+                        error()
+                        break
+                    
+                    if state == "C":
+                        state = 0
+                    elif state == "T":
+                        state = 1
+                    elif state == "X":
+                        response = self.turnouts[id].setup_response
+                        if response:
+                            respond(response)
+                            break
+                        
+                    # <T id state> - Throw or Close a defined turnout/point
+                    if not state in {0, 1}:
+                        error()
+                    else:
+                        await self.turnouts[id].set(state)
+
+                case "J", ("T",):
+                    ids = [ str(turnout.turnout_id)
+                            for turnout in self.turnouts.values() ]
+                    ids = " ".join(ids)
+                    respond(b"<jT %s>" % ids.encode("ascii"))
+                        
+                case "J", ("T", id):
+                    # <J T id> <JT id> - Request details of a specific
+                    # Turnout/Point
+                    for turnout in self.turnouts.values():
+                        setup_response = turnout.setup_response
+                        if setup_response:                            
+                            respond(setup_response)
+
+                            
+                # Accessories
+                case "a", (address, subaddress, activate):
+                    # <a addr subaddr activate>
+                    # - Control an Accessory Decoder with Address and Subaddress
+
+                    if not activate in {0, 1}:
+                        error()
+                        break
+                    
+                    if (address, subaddress) in self.accessories:
+                        accessory = self.accessories[(address, subaddress)]
+                        await accessory.set(activate)
+
+                case "a", (address, activate):
+                    # <a linear_addr activate> - Control an Accessory Decoder
+                    # with linear address
+
+                    if not activate in {0, 1}:
+                        error()
+                        break
+                    
+                    if address in self.accessories:
+                        await self.accessories[address].set(activate)
+
+                case "A", (address, aspect):
+                    if not type(aspect) is int:
+                        error()
+                        break
+                    
+                    # <A address aspect> - Command for DCC Extended Accessories.
+                    if not address in self.accessories:
+                        error()
+                        break
+                    
+                    try:
+                        await self.accessories[address].set(aspect)
+                    except KeyError:
+                        error()
+
+                # Signals                        
+                case "/", (state, signal_id):
+                    if not type(signal_id) is int:
+                        error()
+                        break
+
+                    if not signal_id in self.signals:
+                        error()
+                        break
+                    
+                    try:
+                        await self.signals[signal_id].set(state)
+                    except KeyError:
+                        error()
+                        break
+
+                # Output Pins
+                case "Z":
+                    # At this time we do not define output pins.
+                    pass                
+                    
                 case None:
+                    ic(command, "ignored (None)")
+                    pass
+
+                case _:
+                    ic(command, "ignored (default)")
                     pass
         
     def handle_signal(self, signalnum, stackframe):
@@ -259,6 +414,7 @@ class Station(Station):
                                  self.handle_commands())
         except Exception as exc:
             traceback.print_exception(exc)
+            raise
 
     def run(self):
         asyncio.run_coroutine_threadsafe(self._run(), self.loop)
@@ -283,7 +439,8 @@ class Station(Station):
             self.register_sensor(sensor)
 
     def register_accessory_agent(self, accessory:agents.Accessory):
-        assert isinstance(sensor, agents.Accessory), TypeError
+        assert isinstance(accessory, agents.Accessory), TypeError(
+            "This is registering only Accessory Agents.")
         if accessory.address in self.accessories:
             raise DuplicateError(f"Accessory with address "
                                  f"{accessory.address}"
@@ -294,7 +451,7 @@ class Station(Station):
         
     def register_turnout_agent(self, turnout:agents.Turnout):
         assert isinstance(turnout, agents.Turnout), TypeError(
-            "This is registering Turnout Agents, not turnout hardware.")
+            "This is registering only Turnout Agents.")
         if turnout.turnout_id in self.turnouts:
             raise DuplicateError(f"Turnout (agent!) with id "
                                  f"{turnout.turnout_id}"
@@ -304,7 +461,27 @@ class Station(Station):
             turnout.response_publisher = self.response_publisher
 
     def register_signal_agent(self, signal:agents.Signal):
-        pass
+        assert isinstance(signal, agents.Signal), TypeError(
+            "This is registering only Signal Agents.")
+        if signal.signal_id in self.signals:
+            raise DuplicateError(f"Signal (agent!) with id "
+                                 f"{signal.signal_id}"
+                                 f"already registered.")
+        else:
+            self.signals[signal.signal_id] = signal
+            signal.response_publisher = self.response_publisher
+
+    def register_agent(self, *args:agents.Agent):
+        for agent in args:
+            match type(agent):
+                case agents.Turnout:
+                    self.register_turnout_agent(agent)
+                case agents.Accessory:
+                    self.register_accessory_agent(agent)
+                case agents.Signal:
+                    self.register_signal_agent(agent)
+                case _:
+                    raise TypeError("Don’t know how to handle " + repr(agent))
 
 if __name__ == "__main__":
     import argparse, warnings, pathlib
