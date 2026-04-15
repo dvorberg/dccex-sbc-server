@@ -16,30 +16,30 @@ class Threeway(Turnout):
         left and vice versa. Before a turnout is thrown, they will
         both be reset.
         """
-        self._left_turnout = left_turnout
-        self._right_turnout = right_turnout
+        self.left_turnout = left_turnout
+        self.right_turnout = right_turnout
 
     def reset(self):
-        self._left_turnout.reset()
-        self._right_turnout.reset()
+        self.left_turnout.reset()
+        self.right_turnout.reset()
 
     def throw_left(self):
-        self._right_turnout.reset()
-        self._left_turnout.throw()
+        self.right_turnout.reset()
+        self.left_turnout.throw()
 
     def throw_right(self):
-        self._left_turnout.reset()
-        self._right_turnout.throw()
+        self.left_turnout.reset()
+        self.right_turnout.throw()
 
     @property
     def thrown(self):
-        return self._left_turnout.thrown() or self._right_turnout.thrown()
+        return self.left_turnout.thrown() or self.right_turnout.thrown()
 
     @property
     def state(self) -> int:
-        if self._left_turnout.thrown:
+        if self.left_turnout.thrown:
             return self.left
-        elif self._right_turnout.thrown:
+        elif self.right_turnout.thrown:
             return self.right
         else:
             return self.middle
