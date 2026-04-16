@@ -1,5 +1,4 @@
 import atexit, functools
-import lgpio as sbc
 
 import mcp23017, pca9685
 
@@ -9,10 +8,13 @@ from dccexonsbc.accessories.withservos import (ServoTurnout,
                                                ThreeStateServoSemaphore)
 from dccexonsbc.accessories.compound import Threeway
 from dccexonsbc import agents
+from dccexonsbc.utils import SBC, GPIO
 
-def hardware_setup(station:Station):
+def hardware_setup(station:Station, remote=None):
     loop = station.loop
-    sbc.exceptions = True
+
+    sbc = SBC(remote)
+    gpio = GPIO(sbc)
 
     # Set up the MCP23017 “GPIO Expander”
     expander = mcp23017.Expander(sbc, 1, 0x20)
@@ -25,31 +27,12 @@ def hardware_setup(station:Station):
     # Wrap the expander’s bank A in a SensorArray object. 
     sensors = ExtenderSensorArray(expander.bank_a,
                                   [ 101, 102, 103, 104, 105 ])    
-    
-    handle = sbc.gpiochip_open(0)
 
-    #on_interrupt = InterruptHandler(loop, sensors.on_change)
-    def on_interrupt(*args, **kw):
-        loop.call_soon_threadsafe(sensors.on_change)
-
-    # This needs to be debounced.
-    interrupt_pin = 23
-    result = sbc.gpio_claim_alert(handle,
-                                  interrupt_pin,
-                                  sbc.FALLING_EDGE,
-                                  sbc.SET_PULL_UP)
-    callback = sbc.callback(handle, interrupt_pin,
-                            sbc.FALLING_EDGE,
-                            on_interrupt)
+    gpio.register_pin_callback_threadsafe(
+        23, loop, sensors.on_change, sbc.FALLING_EDGE, sbc.SET_PULL_UP)
 
     station.register_sensors(sensors)
-
-    def cleanup_gpio():
-        callback.cancel()
-        sbc.gpio_free(handle, interrupt_pin)
-        sbc.gpiochip_close(handle)
-    atexit.register(cleanup_gpio)
-
+    
     # Servos
     controller = pca9685.Controller(sbc, 1, 0x40)
     driver = ServoDriver(controller)
