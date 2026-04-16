@@ -73,8 +73,5 @@ def hardware_setup(station:Station):
     signal = ThreeStateServoSemaphore(driver.get_servo(10), (75,  90,),
                                       driver.get_servo(11), (80, 100))
     
-    signal_agent = agents.Accessory(1, signal)
-    station.register_accessory_agent(signal_agent)
-    
-    signal_agent = agents.Signal(1, signal)
-    station.register_agent(signal_agent)
+    accessory_agent = agents.Accessory(1, signal)
+    station.register_accessory_agent(accessory_agent)
