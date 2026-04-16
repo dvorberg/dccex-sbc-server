@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 
-import sys, argparse, time
+import sys, argparse, time, re
 
-import lgpio as sbc
 import pca9685
 
 from dccexonsbc.hardware.i2c import ServoDriver
@@ -14,8 +13,13 @@ def hexint(s):
     else:
         return int(s)
 
+remote_re = re.compile(r"([^:]+)(?::(\d+))?")
+    
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-R", "--remote", help="Operate remotely through a "
+                        "rgpio daemon, specify hostname[:port].",
+                        default=None)
     parser.add_argument("-a", "--address", type=hexint, default=0x40,
                         help="Servo driver’s i2c address on bus")
     parser.add_argument("-b", "--bus", type=hexint, default=1, dest="busnum",
@@ -42,7 +46,26 @@ def main():
         log = sys.stderr
     else:
         log = open("/dev/null", "w")
-    
+
+    if args.remote:
+        match = remote_re.match(args.remote)
+        if match is None:
+            parser.error("Not a legal server:port specification: " + repr(
+                args.remote))
+        else:
+            host, port = match.groups()
+            if port:
+                port = int(port)
+            else:
+                port = 8889
+
+            import rgpio
+            rgpio.exceptions = True
+
+            sbc = rgpio.sbc(host=host, port=port, show_errors=True)
+    else:
+        import lgpio as sbc
+        
     controller = pca9685.Controller(sbc, args.busnum, args.address)
     driver = ServoDriver(controller)
     servo_class = getattr(servos, args.servo_type)
