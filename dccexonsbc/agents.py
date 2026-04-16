@@ -21,8 +21,6 @@ class Agent(Agent, Responder):
         to move of change have a single intetger as id for the device
         and another integer as either an 0=off or 1=on state. 
         """
-        ic(activate)
-        ic(self.state_map)
         if self.state_map:
             self.hardware.set(self.state_map[activate])
         else:
