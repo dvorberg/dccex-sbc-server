@@ -82,7 +82,7 @@ class Server(Server):
         addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
         print(f'Serving on {addrs}')
 
-class ParseError(Exception): pass        
+class DCCEXParseError(Exception): pass        
 
 class Station(Station):
     def __init__(self, host=None, port=2560):
@@ -189,7 +189,7 @@ class Station(Station):
         while params:
             match = self.param_re.search(params)
             if match is None:
-                raise ParseError("Can’t parse params " + repr(params))
+                raise DCCEXParseError("Can’t parse params " + repr(params))
             else:
                 i, s, params = match.groups()
 
@@ -199,7 +199,9 @@ class Station(Station):
                     yield s.decode("ascii").upper()
 
                 
-    command_re = re.compile(br"<([a-zA-Z/=]+)(?: (.*))?>")
+    command_re = re.compile(br"<"
+                            br"(?:([a-zA-Z/=\#]+)(?: (.*))?)"
+                            br">")
     whitespace_re = re.compile(br"\s+")
     def parse_command(self, command:bytes) -> Tuple[str, Tuple]:
         """
@@ -209,26 +211,29 @@ class Station(Station):
         """
         print("parse_command()", repr(command))
         match = self.command_re.match(command)
-        
         if match is None:
-            raise ParseError(command.decode("ascii", "replace"))
+            raise DCCEXParseError(command.decode("ascii", "replace"))
         else:
             opcode, params = match.groups()
             opcode = opcode.decode("ascii")
-
-            if params:
-                params = tuple(self.parse_params(params))
+            
+            if opcode == "M":
+                data = [int(b, 16) for b in params.split(b" ")]
+                return "M", data,
             else:
-                params = ()
+                if params:
+                    params = tuple(self.parse_params(params))
+                else:
+                    params = ()
 
-            if opcode == "JT":
-                opcode = "J"
-                params = ("T",) + params
+                if opcode == "JT":
+                    opcode = "J"
+                    params = ("T",) + params
 
-            if not params:
-                return opcode
-            else:                
-                return opcode, params,
+                if not params:
+                    return opcode
+                else:                
+                    return opcode, params,
         
     async def handle_commands(self):
         # Shorthand:
@@ -244,26 +249,74 @@ class Station(Station):
         def list_sensor_states():
             for sensor in self.sensors.values():
                 respond(sensor.state_response)
-                
+
+        async def set_accessory_extended_aspect_m(first, second, aspect):
+            # “DCC Extended Packet Formats” #600
+            # https://www.nmra.org/sites/default/files/standards/sandrp/DCC/S/s-9.2.1_dcc_extended_packet_formats.pdf
+            
+            # • The most significant bits of the 11-bit address are
+            #   bits 4 to 6 of the second byte.
+            most = (second & 0b01110000) >> 4
+
+            # • By convention these bits (bits 4 to 6 of the second byte)
+            #   are in ones’ complement (reversed).
+            most = 7 - most # Reverse 3 bits
+
+            # • This is followed by bits 0 to 5 of the first byte.
+            followed = first & 0b00111111
+
+            # • The least significant bits of the
+            #   11-bit address are bits 1 to 2 of the second byte.
+            least = (second & 0b00000110) >> 1
+
+            address = (most << 7) | (followed << 2) | (least)
+
+            # These addresses are 0-based.
+            address += 1
+            
+            await set_accessory_extended_aspect(address, aspect)
+
+        async def set_accessory_extended_aspect(address, aspect):
+            try:
+                await self.accessories[address].set(aspect)
+            except KeyError:
+                error()
+                        
         async for command in Subscription(self.command_publisher):
             print("Handling command", repr(command))
 
             try:
                 cmd = self.parse_command(command)
-            except ParseError as exc:
+            except DCCEXParseError as exc:
                 traceback.print_exception(exc)
                 error()
                 continue
 
-            ic(cmd)
             match cmd:
                 # Station init
-
                 case "s":
-                    respond(b"<iDCC-EX 0.0 / RaspberryPi / None / 0>")
+                    respond(b"<iDCC-EX V-5.4.20 / "
+                            b"MEGA / EX8874 G-master-202604121700Z>")
                     list_turnouts()
                     list_sensor_states()
-                
+
+                case "#":
+                    respond("<# 50>")
+
+                # Direct package command
+                case "M", data:
+                    # Apparently, jmri supported extended accessories
+                    # before DCC-EX did and insists on sending raw
+                    # DCC packages which it provides through the <M …>
+                    # internal command. 
+                    assert data[0] == 0, ValueError
+                    data = data[1:]
+                    
+                    if data:
+                        opcode = data[0] >> 6
+                        if opcode == 0b10 and len(data) == 3:
+                            await set_accessory_extended_aspect_m(*data)
+                    
                 # Sensors
                 case "S":
                     # Request technical sensor info.
@@ -289,8 +342,6 @@ class Station(Station):
                     list_turnouts()
                         
                 case "T", (id, state,):
-                    ic(id, state)
-                    
                     if id not in self.turnouts:
                         error()
                         break
@@ -360,11 +411,8 @@ class Station(Station):
                         error()
                         break
                     
-                    try:
-                        await self.accessories[address].set(aspect)
-                    except KeyError:
-                        error()
-
+                    await set_accessory_extended_aspect(address, aspect)
+                    
                 # Signals                        
                 case "/", (state, signal_id):
                     if not type(signal_id) is int:
