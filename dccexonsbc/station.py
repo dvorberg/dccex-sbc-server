@@ -534,27 +534,21 @@ class Station(Station):
 if __name__ == "__main__":
     import argparse, warnings, pathlib
 
-    from .utils import hardware_setup_functions
+    from .utils import HardwareSetupArgumentParser
 
-    parser = argparse.ArgumentParser()
+    parser = HardwareSetupArgumentParser()
     parser.add_argument("-H", "--host",
                         help="IP address or host name to "
                         "open bind to. Defaults to any available.")
     parser.add_argument("-p", "--port", type=int, default=2560,
                         help="TCP port to listen to. Defaults to 2560.")
-    parser.add_argument("modules", nargs="+",
-                        help="Python module that defines "
-                        "the hardware_setup(station) function we use to "
-                        "setup the hardware this virtual command station "
-                        "will interact with.")
 
     args = parser.parse_args()
 
     station = Station(host=args.host, port=args.port)
     
     try:
-        for hardware_setup in hardware_setup_functions(args.modules):
-            hardware_setup(station)
+        parser.call_hardware_setup_for(station)
     except:
         station.abort()
         raise
