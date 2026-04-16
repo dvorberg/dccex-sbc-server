@@ -243,4 +243,41 @@ class Servo(object):
         self._timeout.start()
     
     
+class Pin(object):
+    """
+    GPIO Pin for output.
+    """
+    def __init__(self, initial:bool):
+        self._state = initial
     
+    def set(self, state:bool) -> None:
+        raise NotImplementedError()
+
+    def get(self) -> bool:
+        return self._state
+
+    def turn_on(self):
+        self.set(True)
+
+    def turn_off(self):
+        self.set(False)
+
+    @property
+    def on(self) -> bool:
+        return self._state
+
+    @on.setter
+    def on(self, state):
+        self.set(state)
+
+    @property
+    def off(self) -> bool:
+        return (not self._state)
+
+    @on.setter
+    def off(self, state:bool):
+        self.set(not state)
+        
+        
+
+        
