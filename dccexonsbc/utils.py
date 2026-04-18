@@ -113,6 +113,27 @@ def SBC(remote=None):
 
 class GPIOError(Exception): pass
 
+class FunctionWrapper(object):
+    def __init__(self, name, function):
+        self.name = name
+        self.function = function
+
+    def __call__(self, *args, **kw):
+        print("CALL!", self.name + "(", repr(args), repr(kw), ")")
+        return self.function(*args, **kw)
+
+class Wrapper(object):
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+        
+    def __getattr__(self, name):
+        print("__getattr__", name)        
+        ret = getattr(self.wrapped, name)
+        if name.startswith("gpio_") or name == "callback":
+            return FunctionWrapper(name, ret)
+        else:
+            return ret
+    
 class GPIO(object):
     """
     Wrapper class for a SBC’s GPIO pins.
@@ -127,7 +148,8 @@ class GPIO(object):
     """
 
     def __init__(self, sbc, gpio_chip=0):
-        self.sbc = sbc
+        self.sbc = sbc # Wrapper()
+        self.gpio_chip = gpio_chip
         self._handle = self.sbc.gpiochip_open(gpio_chip)
         self._write_pins = set()
         self._read_pins = {}
@@ -153,7 +175,8 @@ class GPIO(object):
         return Pin(self, pin, initial)
 
     def register_pin_callback(self, pin:int, callback:Callable,
-                              event_flags:int, line_flags:int=0):
+                              event_flags:int, line_flags:int=0,
+                              bouncetime_msec:float|None=None):
         """
         * `pin` is the number of the pin to be used in l/rgpio numbering
            which corresponds to “BCM” numbering on a Raspberry Pi, that is
@@ -164,32 +187,67 @@ class GPIO(object):
           each available as properties of `sbc`.
         * Possible `line_flags` are: SET_ACTIVE_LOW, SET_OPEN_DRAIN,
           SET_OPEN_SOURCE, SET_PULL_UP, SET_PULL_DOWN, and SET_PULL_NONE.
+        * If `bouncetime_msec` is set, l/rgpio’s debouncing mechanism will
+          be used. 
         """
         if pin in self._write_pins:
             raise GPIOError("Can’t use a pin for reading and writing "
                             "at the same time.")
         if pin in self._read_pins:
             raise GPIOError("Can’t register multiple callbacks per pin.")
-        result = self.sbc.gpio_claim_alert(self._handle, pin,
-                                           event_flags, line_flags)
-        callback = self.sbc.callback(self._handle, pin, line_flags, callback)
-        self._read_pins[pin] = callback
+
+        # This gpio_free may seem redundant, but is required when changing
+        # the line-flags of an already acquired input line
+        try:
+            self.sbc.gpio_free(self._handle, pin)
+        except Exception:
+            pass
+
+        # RPi.setup() does this. It does seem redundant. 
+        self.sbc.gpio_claim_input(self._handle, pin, line_flags)
+        
+        self.sbc.gpio_claim_alert(self._handle, pin, event_flags, line_flags)
+        
+        if bouncetime_msec:
+            self.sbc.gpio_set_debounce_micros(
+                self._handle, pin, int(bouncetime_msec*1000))
+        
+        self._read_pins[pin] = self.sbc.callback(
+            self._handle, pin, func=callback)
+
+        initial = self.sbc.gpio_read(self._handle, pin)
+        callback(self.gpio_chip, pin, initial, 0)
 
     def _write__Pin(self, pin:int, level:int):
         self.sbc.gpio_write(self._handle, pin, level)
 
     def register_pin_callback_threadsafe(
             self, pin:int, loop, callback:Callable, 
-            event_flags, line_flags=0):
+            event_flags, line_flags=0,
+            bouncetime_msec:float|None=None):
         """
         Like `register_pin_callback()` but uses `loop.call_soon_threadsafe`
         to run the callback on the event loop’s thread in a way that interacts
         will with your asyncio code.
+        
+        * `pin` is the number of the pin to be used in l/rgpio numbering
+           which corresponds to “BCM” numbering on a Raspberry Pi, that is
+           logical numbering, *not* the number of the pin in the header.
+        * The `callback` will receive four parameters:
+          `chip`, `gpio`, `level`, `timestamp`.
+        * Possible `event_flags` are RISING_EDGE, FALLING_EDGE, and BOTH_EDGES,
+          each available as properties of `sbc`.
+        * Possible `line_flags` are: SET_ACTIVE_LOW, SET_OPEN_DRAIN,
+          SET_OPEN_SOURCE, SET_PULL_UP, SET_PULL_DOWN, and SET_PULL_NONE.
+        * If `bouncetime_msec` is set, l/rgpio’s debouncing mechanism will
+          be used. 
         """
         def call(*args, **kw):
             loop.call_soon_threadsafe(functools.partial(callback, *args, **kw))
 
-        self.register_pin_callback(pin, call, event_flags, line_flags)
+        self.register_pin_callback(pin, call,
+                                   event_flags, line_flags,
+                                   bouncetime_msec)
 
     # def register_pin_coroutine_threadsafe(
     #         self, pin:int, loop, coroutine:Coroutine,
