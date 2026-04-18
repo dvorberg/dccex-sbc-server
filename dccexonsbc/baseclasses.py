@@ -172,7 +172,8 @@ class Sensor(Hardware, Responder):
         always be published. 
         """
         self.active = active
-        self.publish(self.state_response)
+        if self.response_publisher:
+            self.publish(self.state_response)
 
     @property
     def state_response(self) -> bytes:
