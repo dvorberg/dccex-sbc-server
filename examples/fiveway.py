@@ -1,5 +1,3 @@
-import atexit, functools
-
 import mcp23017, pca9685
 
 from dccexonsbc.station import Station
@@ -11,8 +9,6 @@ from dccexonsbc import agents
 from dccexonsbc.utils import SBC, GPIO
 
 def hardware_setup(station:Station, remote=None):
-    loop = station.loop
-
     sbc = SBC(remote)
     gpio = GPIO(sbc)
 
@@ -29,7 +25,8 @@ def hardware_setup(station:Station, remote=None):
                                   [ 101, 102, 103, 104, 105 ])    
 
     gpio.register_pin_callback_threadsafe(
-        23, loop, sensors.on_change, sbc.FALLING_EDGE, sbc.SET_PULL_UP)
+        23, station.loop, sensors.on_change,
+        sbc.FALLING_EDGE, sbc.SET_PULL_UP)
 
     station.register_sensors(sensors)
     
