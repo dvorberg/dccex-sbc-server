@@ -12,7 +12,7 @@ from i2cutils.bitpattern import Byte
 from ..baseclasses import Responder, Sensor, Servo
 from .servos import SG90
 
-class ExtenderSensorArray(Responder):
+class ExtenderSensorArray(object):
     """
     Holds up to eight Sensor objects, one for each pin of a
     mcp23017 GPIO Extender’s bank.
@@ -49,6 +49,8 @@ class ExtenderSensorArray(Responder):
         The last state read from the Expander’s bank or None on
         init.
         """
+
+        self.on_change()
         
     @property
     def sensors(self) -> list:
@@ -82,6 +84,7 @@ class ServoChannel(object):
             self.output.pwm_off = 0
         else:
             self.output.pwm_off = int(pulse * self.update_rate * 4096)
+            
             
 class ServoDriver(object):
     def __init__(self, controller:pca9685.Controller,
