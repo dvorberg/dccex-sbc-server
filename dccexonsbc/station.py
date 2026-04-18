@@ -55,10 +55,7 @@ class Server(Server):
             await writer.drain()
 
     async def handle_signals(self):
-        ic("handle_signals()")
         async for signal in Subscription(self.station.signal_publisher):
-            ic(signal)
-                
             if signal is TerminateSignal:
                 # Our process is told to terminate.
                 # Stop what we’re doing.
@@ -400,6 +397,8 @@ class Station(Station):
                     
                     if address in self.accessories:
                         await self.accessories[address].set(activate)
+                    else:
+                        error()
 
                 case "A", (address, aspect):
                     if not type(aspect) is int:
