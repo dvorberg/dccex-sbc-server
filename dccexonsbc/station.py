@@ -1,8 +1,10 @@
 import sys, re, time, asyncio, threading, logging, signal, functools, traceback
+import cmd, readline
 from typing import Tuple
 
 import icecream; icecream.install()
 
+from . import comdebug
 from .abc import Server, Station
 from .baseclasses import Responder, Sensor
 from . import agents
@@ -51,8 +53,11 @@ class Server(Server):
             
             if not response.endswith(b"\r\n"):
                 writer.write(b"\r\n")
-                
-            await writer.drain()
+
+            try:
+                await writer.drain()
+            except ConnectionResetError:
+                break
 
     async def handle_signals(self):
         async for signal in Subscription(self.station.signal_publisher):
@@ -206,7 +211,6 @@ class Station(Station):
         and a tuple of 0 or more parameters. If these parameters can be
         parsed into an integer, they will be integers, otherwise strings.
         """
-        print("parse_command()", repr(command))
         match = self.command_re.match(command)
         if match is None:
             raise DCCEXParseError(command.decode("ascii", "replace"))
@@ -276,11 +280,11 @@ class Station(Station):
         async def set_accessory_extended_aspect(address, aspect):
             try:
                 await self.accessories[address].set(aspect)
-            except KeyError:
+            except IndexError:
                 error()
                         
         async for command in Subscription(self.command_publisher):
-            print("Handling command", repr(command))
+            comdebug(command, color="cyan")
 
             try:
                 cmd = self.parse_command(command)
@@ -328,6 +332,7 @@ class Station(Station):
                     # Delete a sensor. We respond by indicating an error.
                     # We can’t delete sensonrs.
                     error()
+                    
                 case "S", (id, vpin, pullup):
                     # Setup a sensor. We don’t do anything, but respond as
                     # if the operation had been successfull.
@@ -341,7 +346,7 @@ class Station(Station):
                 case "T", (id, state,):
                     if id not in self.turnouts:
                         error()
-                        break
+                        continue
                     
                     if state == "C":
                         state = 0
@@ -351,7 +356,7 @@ class Station(Station):
                         response = self.turnouts[id].setup_response
                         if response:
                             respond(response)
-                            break
+                            continue
                         
                     # <T id state> - Throw or Close a defined turnout/point
                     if not state in {0, 1}:
@@ -381,7 +386,7 @@ class Station(Station):
 
                     if not activate in {0, 1}:
                         error()
-                        break
+                        continue
                     
                     if (address, subaddress) in self.accessories:
                         accessory = self.accessories[(address, subaddress)]
@@ -393,7 +398,7 @@ class Station(Station):
 
                     if not activate in {0, 1}:
                         error()
-                        break
+                        continue
                     
                     if address in self.accessories:
                         await self.accessories[address].set(activate)
@@ -401,14 +406,15 @@ class Station(Station):
                         error()
 
                 case "A", (address, aspect):
-                    if not type(aspect) is int:
+                    ic(address, aspect)
+                    if not type(aspect) is int:                        
                         error()
-                        break
+                        continue
                     
                     # <A address aspect> - Command for DCC Extended Accessories.
                     if not address in self.accessories:
                         error()
-                        break
+                        continue
                     
                     await set_accessory_extended_aspect(address, aspect)
                     
@@ -416,17 +422,17 @@ class Station(Station):
                 case "/", (state, signal_id):
                     if not type(signal_id) is int:
                         error()
-                        break
+                        continue
 
                     if not signal_id in self.signals:
                         error()
-                        break
+                        continue
                     
                     try:
                         await self.signals[signal_id].set(state)
                     except KeyError:
                         error()
-                        break
+                        continue
 
                 # Output Pins
                 case "Z":
@@ -465,7 +471,6 @@ class Station(Station):
 
     def run(self):
         asyncio.run_coroutine_threadsafe(self._run(), self.loop)
-        self.thread.join()
 
     @property
     def running(self):
@@ -530,6 +535,62 @@ class Station(Station):
                 case _:
                     raise TypeError("Don’t know how to handle " + repr(agent))
 
+class Console(cmd.Cmd):
+    def __init__(self, station:Station):        
+        super().__init__()
+
+        self.station = station
+
+        self.prompt = "=> "
+
+        self.station.loop.create_task(
+            self.debug_responses(), name="debug_resonses")
+        
+    def cmdloop(self, intro=None):
+        """
+        I re-implement this to correctly support Ctrl-D and Ctrl-C.
+        """
+        stop = False
+        while not stop:
+            if self.cmdqueue:
+                line = self.cmdqueue.pop(0)
+            else:
+                try:
+                    line = input(self.prompt)
+                except EOFError:
+                    # Ctrl-D
+                    print()
+                    self.station.abort()
+                    self.stop = True
+                    break
+
+            line = line.rstrip()
+
+            if line:
+                if not line.startswith("<"):
+                    line = "<" + line + ">"
+                
+                if type(line) is str:
+                    line = line.encode("utf-8")
+
+                self.station.loop.call_soon_threadsafe(
+                    functools.partial(self.station.command_publisher.publish,
+                                      line))
+
+                time.sleep(.2)
+
+
+    async def debug_responses(self):
+        async for response in Subscription(self.station.response_publisher):
+            if type(response) is str:
+                response = response.encode("ascii")
+
+            if response.startswith(b"<X>"):
+                comdebug(response, color="red")
+            else:
+                comdebug(response, color="green")
+
+                
 if __name__ == "__main__":
     import argparse, warnings, pathlib
 
@@ -541,6 +602,9 @@ if __name__ == "__main__":
                         "open bind to. Defaults to any available.")
     parser.add_argument("-p", "--port", type=int, default=2560,
                         help="TCP port to listen to. Defaults to 2560.")
+    parser.add_argument("-C", "--console", action="store_true",
+                        default=False, help="Open an interactive console "
+                        "on the current terminal.")
 
     args = parser.parse_args()
 
@@ -552,5 +616,16 @@ if __name__ == "__main__":
         station.abort()
         raise
     else:
-        station.run()
-    
+        if args.console:
+            console = Console(station)
+        else:
+            console = None
+
+        t = threading.Thread(target=station.run)
+        t.start()
+            
+        if console:
+            time.sleep(1)
+            console.cmdloop()
+            
+        station.thread.join()
