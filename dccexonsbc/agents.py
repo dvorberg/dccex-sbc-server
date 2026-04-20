@@ -130,7 +130,7 @@ class Threeway(object):
                 hardware = wrapper.hardware.left_turnout
             else:
                 hardware = wrapper.hardware.right_turnout
-                
+               
             super().__init__(turnout_id, hardware)
             
             self.wrapper = wrapper
@@ -157,7 +157,45 @@ class Threeway(object):
         self.right_agent.publish(b"<H %i %i>" % (
             self.right_agent.turnout_id,
             self.hardware.right_turnout.state, ))
-        
+
+class Cross(object):
+    class Agent(Turnout):
+        def __init__(self, wrapper, turnout_id, ab=0):
+            hardware = [ wrapper.cross.a,
+                         wrapper.cross.b][ab]
+               
+            super().__init__(turnout_id, hardware)
+            
+            self.wrapper = wrapper
+            self.ab = ab
+
+        async def set(self, state:int):
+            cross = self.wrapper.cross
+            
+            if state == 0:
+                cross.a.reset()
+                cross.b.reset()
+            else:
+                if self.ab == 0:
+                    cross.a.throw()
+                    cross.b.reset()
+                else:
+                    cross.b.throw()
+                    cross.a.reset()                    
+                
+            await self.wrapper.publish_states()
+
+    def __init__(self, a_id:int, b_id:int, cross:Hardware):
+        self.cross = cross
+        self.a_agent = self.Agent(self, a_id, 0)
+        self.b_agent = self.Agent(self, b_id, 1)
+
+    async def publish_states(self):
+        self.a_agent.publish(b"<H %i %i>" % (
+            self.a_agent.turnout_id, self.cross.a.state, ))
+        self.b_agent.publish(b"<H %i %i>" % (
+            self.b_agent.turnout_id, self.cross.b.state, ))
+
         
 class Signal(SilentAgent):
     state_map = { "AMBER": "amber",
