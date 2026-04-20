@@ -69,36 +69,23 @@ class ExtenderSensorArray(object):
                 
         self.state = new
 
-        
-class ServoChannel(object):
-    def __init__(self, output:pca9685.Output, update_rate:float):
-        self.output = output
-        self.update_rate = update_rate
-
-        # Initialize the channel. 
-        self.output.pwm_on = 0
-        self.output.pwm_off = 0
-
-    def set_pulse(self, pulse:float|None):
-        if pulse is None:
-            self.output.pwm_off = 0
-        else:
-            self.output.pwm_off = int(pulse * self.update_rate * 4096)
-            
-            
+       
 class ServoDriver(object):
     def __init__(self, controller:pca9685.Controller,
                  update_rate_mhz:float=50,
+                 max_active_channels:int=16,
                  default_servo_class:type[Servo]=SG90,
                  default_stop_timeout:float=0.2):
         self.controller = controller
         
         controller.set_update_rate(update_rate_mhz)
         self.update_rate = update_rate_mhz
+
+        self.semaphore = threading.Semaphore(max_active_channels)
         
         self._servos = {}
         """
-        Mape integer channel numbers to Servo objects.
+        Map integer channel numbers to Servo objects.
         """
 
         self.default_servo_class = default_servo_class
@@ -115,8 +102,7 @@ class ServoDriver(object):
                 stop_timeout = self.default_stop_timeout
                 
             self._servos[channel_no] = servo_class(
-                ServoChannel(self.controller[channel_no],
-                             self.update_rate).set_pulse,
+                ServoChannel(self, self.controller[channel_no]).set_pulse,
                 stop_timeout)
             
         return self._servos[channel_no]
@@ -124,3 +110,25 @@ class ServoDriver(object):
     def __get_item__(self, idx:int):
         return self.make_servo(idx)
 
+class ServoChannel(object):
+    def __init__(self, driver:ServoDriver, output:pca9685.Output):
+        self.driver = driver
+        self.output = output
+
+        # Initialize the channel. 
+        self.output.pwm_on = 0
+        self.output.pwm_off = 0
+
+    def set_pulse(self, pulse:float|None):
+        if pulse is None:
+            self.output.pwm_on = 0
+            self.output.pwm_off = 0
+            self.driver.semaphore.release()
+        else:
+            # We activate the servo in a separate thread. If more than
+            # driver.max_active_channels are currently active,
+            # semaphore.acquire() will block until one becomes available.
+            self.driver.semaphore.acquire()
+            self.output.pwm_on = 0
+            self.output.pwm_off = int(pulse * self.driver.update_rate * 4096)
+            
