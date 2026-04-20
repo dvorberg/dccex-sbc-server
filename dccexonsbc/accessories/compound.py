@@ -1,6 +1,8 @@
 import time
 from ..baseclasses import Turnout
 
+import icecream; icecream.install()
+
 class Threeway(Turnout):
     left = 1
     middle = 0
@@ -60,60 +62,64 @@ class Threeway(Turnout):
 class Cross(Turnout):
     """
     This models a symmetrical cross like Märklin 2260 as two
-    regular turnouts that face the same way.
+    regular turnouts that face in opposite ways.
 
     There are four ways over the cross:
-    - Diagonally, when both virtual turnouts are reset (ab).
-    - Diagonally the other way, when both turnouts are thrown (AB).
-    - Around one curve, when only one virtual turnout is thrown (Ab).
-    - Around the other curve, when the only other is thrown (aB).
+    - Diagonally, when both virtual turnouts are reset (AB).
+    - Diagonally the other way, when both turnouts are thrown (ab).
+    - Around one curve, when only one virtual turnout is thrown (Aa).
+    - Around the other curve, when the only other is thrown (Bb).
 
-    A sketch and a little try and error help: Draw the main line and
-    one turnouts on either side facing away from another. The main
-    line’s end points are a and b. The turnout’s ends are A and B.
+            b
+             \
+              \
+    A ----------------------B
+                \
+                 \
+                  a
     """
 
-    ab = 0
-    Ab = 1
-    aB = 2
-    AB = 3
+    AB = 0
+    Aa = 1
+    bB = 2
+    ab = 3
 
-    states = { ab, Ab, aB, AB, }
+    states = { AB, Aa, bB, ab }
 
     def __init__(self, a:Turnout, b:Turnout):
-        self._a = a
-        self._b = b
+        self.a = a
+        self.b = b
 
     def reset(self):
-        self._a.reset()
-        self._b.reset()
+        self.a.reset()
+        self.b.reset()
 
     @property
     def thrown(self):
-        return self._a.thrown() or self._b.thrown()
+        return self.a.thrown() or self.b.thrown()
 
     @property
     def state(self) -> int:
-        # Ah, nothing like a little binary arithmetic to get the brain cells
-        # going! Feels like writing C. Too bad this thing doesn’t have
-        # pointer arithmetic. — Then again: not really.
-        return self._a.state | self._b.state << 1
+        return self.a.state | self.b.state << 1
 
     def set(self, state:int):
         if state == self.state:
             return
 
-        self._a.set(state & 1)
-        self._b.set(state & 2)
+        ic(state)
+        self.a.set(state & 1)
+        self.b.set( (state & 2) >> 1 )
+
+    def throw_AB(self):
+        self.set(self.AA)
+
+    def throw_Aa(self):
+        self.set(self.Aa)
+
+    def throw_bB(self):
+        self.set(self.bB)
 
     def throw_ab(self):
         self.set(self.ab)
 
-    def throw_Ab(self):
-        self.set(self.Ab)
-
-    def throw_aB(self):
-        self.set(self.aB)
-
-    def throw_AB(self):
-        self.set(self.AB)
+        
