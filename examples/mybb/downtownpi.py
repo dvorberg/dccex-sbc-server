@@ -43,17 +43,21 @@ def hardware_setup(station:Station, remote=None):
     driver = ServoDriver(controller, max_active_channels=1)
     
     a = ServoTurnout(driver.get_servo(9), (150, 60))
-    time.sleep(.5)
-    b = ServoTurnout(driver.get_servo(10), (125, 80))
-    time.sleep(.5)
-    cross = Cross(a, b)
-    cross_wrapper = agents.Cross(301, 302, cross)
+    station.register_turnout_agent(agents.Turnout(301, a))
+    time.sleep(.3)
     
-    station.register_turnout_agent(cross_wrapper.a_agent)
-    station.register_turnout_agent(cross_wrapper.b_agent)
+    b = ServoTurnout(driver.get_servo(10), (125, 80))
+    station.register_turnout_agent(agents.Turnout(302, b))
+    time.sleep(.3)
+    
+    #cross = Cross(a, b)
+    #cross_wrapper = agents.Cross(301, 302, cross)
+    
+    #station.register_turnout_agent(cross_wrapper.a_agent)
+    #station.register_turnout_agent(cross_wrapper.b_agent)
     
     lower_turnout = ServoTurnout(driver.get_servo(11), (90, 120))
-    time.sleep(.5)
+    time.sleep(.3)
     station.register_turnout_agent(agents.Turnout(303, lower_turnout))
     
     # Semaphores
@@ -61,13 +65,13 @@ def hardware_setup(station:Station, remote=None):
     # Ausfahrtsignale
     station.register_accessory_agent(agents.Accessory(
         311, ServoSemaphore(driver.get_servo(2), (145, 132,))))
-    time.sleep(.5)
+    time.sleep(.3)
     station.register_accessory_agent(agents.Accessory(
         312, ServoSemaphore(driver.get_servo(1), (153, 132,))))
-    time.sleep(.5)
+    time.sleep(.3)
     station.register_accessory_agent(agents.Accessory(
         313, ServoSemaphore(driver.get_servo(0), (136, 152,))))
-    time.sleep(.5)
+    time.sleep(.3)
 
     # Einfahrtsignale (dreiflüglich)
     station.register_accessory_agent(agents.Accessory(
