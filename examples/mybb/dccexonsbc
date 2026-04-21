@@ -1,0 +1,15 @@
+#!/bin/bash
+
+configdir=/etc/dccexonsbc
+hostname=$(hostname -s)
+configfile=$configdir/${hostname}.py
+
+. /srv/trainvenv/bin/activate
+
+if [ -f $configfile ]
+then
+    python -m dccexonsbc.station -H $hostname $configfile
+else
+    echo "No $configfile, doing nothing."
+    cat > /dev/null # Do nothing but keep systemd from respawning us.
+fi
