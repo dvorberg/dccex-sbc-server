@@ -18,12 +18,23 @@ def _debug(doit:bool, *args, color="black", **kw):
             sys.stderr.write("\n")
         else:
             args = [ make_printable(arg) for arg in args ]
-            
-            out = io.StringIO()
-            print(*args, **kw, file=out)
-            s = out.getvalue()
 
-            termcolor.cprint(s, color, end="")
+            if sys.stderr.isatty():
+                out = io.StringIO()
+                print(*args, **kw, file=out)
+                s = out.getvalue()
+
+                termcolor.cprint(s, color, end="")
+            else:
+                if color == "red":
+                    color = "ERR"
+                elif color == "cyan":
+                    color = "IN-"
+                else:
+                    color = "OUT"
+                    
+                print(color, *args, **kw, file=sys.stderr)
+                
         sys.stderr.flush()
 
 def debug(*args, color="grey", **kw):
