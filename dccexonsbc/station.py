@@ -32,6 +32,10 @@ class Server(Server):
         self.handler_tasks.add(write_handler)
         write_handler.add_done_callback(self.remove_task)
 
+        # Inform newly connected clients of our current conditions.
+        self.station.command_publisher.publish(b"<T>")
+        self.station.command_publisher.publish(b"<Q>")
+
 
     def remove_task(self, task):
         self.handler_tasks.discard(task)
@@ -470,7 +474,20 @@ class Station(Station):
             raise
 
     def run(self):
+        self.loop.create_task(
+            self.debug_responses(), name="debug_responses")
+        
         asyncio.run_coroutine_threadsafe(self._run(), self.loop)
+
+    async def debug_responses(self):
+        async for response in Subscription(self.response_publisher):
+            if type(response) is str:
+                response = response.encode("ascii")
+
+            if response.startswith(b"<X>"):
+                comdebug(response, color="red")
+            else:
+                comdebug(response, color="green")
 
     @property
     def running(self):
@@ -543,9 +560,6 @@ class Console(cmd.Cmd):
 
         self.prompt = "=> "
 
-        self.station.loop.create_task(
-            self.debug_responses(), name="debug_resonses")
-        
     def cmdloop(self, intro=None):
         """
         I re-implement this to correctly support Ctrl-D and Ctrl-C.
@@ -578,18 +592,6 @@ class Console(cmd.Cmd):
                                       line))
 
                 time.sleep(.2)
-
-
-    async def debug_responses(self):
-        async for response in Subscription(self.station.response_publisher):
-            if type(response) is str:
-                response = response.encode("ascii")
-
-            if response.startswith(b"<X>"):
-                comdebug(response, color="red")
-            else:
-                comdebug(response, color="green")
-
                 
 if __name__ == "__main__":
     import argparse, warnings, pathlib
